@@ -1,0 +1,13 @@
+com\thanhnien\rss\model\Category$CategoryBuilder.class
+com\thanhnien\rss\model\ArticleDetail$ArticleDetailBuilder.class
+com\thanhnien\rss\config\CorsConfig.class
+com\thanhnien\rss\model\RssFeed.class
+com\thanhnien\rss\service\RssService.class
+com\thanhnien\rss\model\ArticleDetail.class
+com\thanhnien\rss\model\Article$ArticleBuilder.class
+com\thanhnien\rss\model\Category.class
+com\thanhnien\rss\ThanhnienRssApplication.class
+com\thanhnien\rss\service\ArticleScraperService.class
+com\thanhnien\rss\controller\RssController.class
+com\thanhnien\rss\model\Article.class
+com\thanhnien\rss\model\RssFeed$RssFeedBuilder.class
