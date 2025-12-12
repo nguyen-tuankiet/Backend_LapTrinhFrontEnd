@@ -20,9 +20,10 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
+import com.thanhnien.rss.model.HomePageData;
+import com.thanhnien.rss.model.CategorySection;
 import org.springframework.cache.annotation.Cacheable;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -658,7 +659,8 @@ public class RssService {
                                                                         : "")
                                                         .imageUrl(extractImageUrl(entry))
                                                         .videoUrl(extractVideoUrl(entry.getLink()))
-                                                        .author(entry.getAuthor())
+                                                        .author(extractAuthor(entry))
+                                                        .category(extractCategory(entry))
                                                         .build())
                                         .collect(Collectors.toList());
 
@@ -798,5 +800,86 @@ public class RssService {
                         logger.error("Error extracting video URL from {}: {}", articleUrl, e.getMessage());
                 }
                 return null;
+        }
+
+        /**
+         * Extract author from RSS entry
+         */
+        private String extractAuthor(SyndEntry entry) {
+                if (entry.getAuthor() != null && !entry.getAuthor().isEmpty()) {
+                        return entry.getAuthor();
+                }
+                if (entry.getAuthors() != null && !entry.getAuthors().isEmpty()) {
+                        return entry.getAuthors().get(0).getName();
+                }
+                return "";
+        }
+
+        /**
+         * Extract category from RSS entry
+         */
+        private String extractCategory(SyndEntry entry) {
+                if (entry.getCategories() != null && !entry.getCategories().isEmpty()) {
+                        return entry.getCategories().get(0).getName();
+                }
+                return null;
+        }
+
+        /**
+         * Get aggregated data for Home Page
+         */
+        public HomePageData getHomePageData() {
+                // 1. Fetch Home/Featured articles
+                CompletableFuture<List<Article>> featuredFuture = CompletableFuture.supplyAsync(() -> {
+                        RssFeed feed = self.getHomeArticles();
+                        return feed.getArticles().stream().limit(5).collect(Collectors.toList());
+                });
+
+                // 2. Fetch ALL specific categories concurrently
+                List<CompletableFuture<CategorySection>> categoryFutures = this.categories.stream()
+                                .filter(cat -> !cat.getSlug().equals("home")) // Skip Home category
+                                .map(cat -> CompletableFuture.supplyAsync(() -> {
+                                        RssFeed feed = self.getArticlesByCategory(cat.getSlug());
+                                        return CategorySection.builder()
+                                                        .categoryName(cat.getName())
+                                                        .categorySlug(cat.getSlug())
+                                                        .articles(feed.getArticles().stream().limit(5)
+                                                                        .collect(Collectors.toList()))
+                                                        .build();
+                                }))
+                                .collect(Collectors.toList());
+
+                // 3. Fetch Trending (using tno.rss)
+                CompletableFuture<List<Article>> trendingFuture = CompletableFuture.supplyAsync(() -> {
+                        RssFeed feed = self.fetchRss(BASE_RSS_URL + "tno.rss");
+                        return feed.getArticles().stream().limit(5).collect(Collectors.toList());
+                });
+
+                // 4. Fetch Most Read (using tin-24h.rss)
+                CompletableFuture<List<Article>> mostReadFuture = CompletableFuture.supplyAsync(() -> {
+                        RssFeed feed = self.fetchRss(BASE_RSS_URL + "tin-24h.rss");
+                        return feed.getArticles().stream().limit(5).collect(Collectors.toList());
+                });
+
+                // Wait for all
+                CompletableFuture<Void> allFutures = CompletableFuture.allOf(
+                                featuredFuture, trendingFuture, mostReadFuture,
+                                CompletableFuture.allOf(categoryFutures.toArray(new CompletableFuture[0])));
+
+                try {
+                        allFutures.join();
+
+                        return HomePageData.builder()
+                                        .featuredArticles(featuredFuture.get())
+                                        .categorySections(categoryFutures.stream()
+                                                        .map(CompletableFuture::join)
+                                                        .collect(Collectors.toList()))
+                                        .trendingArticles(trendingFuture.get())
+                                        .mostReadArticles(mostReadFuture.get())
+                                        .build();
+                } catch (Exception e) {
+                        logger.error("Error fetching Home Page Data: {}", e.getMessage());
+                        return new HomePageData(); // Return empty on error
+                }
         }
 }

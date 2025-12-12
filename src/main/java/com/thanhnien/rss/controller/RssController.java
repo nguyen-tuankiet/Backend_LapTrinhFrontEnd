@@ -2,6 +2,7 @@ package com.thanhnien.rss.controller;
 
 import com.thanhnien.rss.model.Category;
 import com.thanhnien.rss.model.RssFeed;
+import com.thanhnien.rss.model.HomePageData;
 import com.thanhnien.rss.service.RssService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -27,6 +28,15 @@ public class RssController {
     @GetMapping("/home")
     public ResponseEntity<RssFeed> getHomeArticles() {
         return ResponseEntity.ok(rssService.getHomeArticles());
+    }
+
+    /**
+     * Get aggregated home page data
+     * GET /api/rss/home-page
+     */
+    @GetMapping("/home-page")
+    public ResponseEntity<HomePageData> getHomePageData() {
+        return ResponseEntity.ok(rssService.getHomePageData());
     }
 
     /**
