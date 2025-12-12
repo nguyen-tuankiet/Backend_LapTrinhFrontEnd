@@ -15,6 +15,7 @@ public class Article {
     private String description;
     private String pubDate;
     private String imageUrl;
+    private String videoUrl;
     private String category;
     private String author;
 }

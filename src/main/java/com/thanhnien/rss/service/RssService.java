@@ -5,6 +5,10 @@ import com.rometools.rome.feed.synd.SyndFeed;
 import com.rometools.rome.io.SyndFeedInput;
 import com.rometools.rome.io.XmlReader;
 import com.thanhnien.rss.model.Article;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+
 import com.thanhnien.rss.model.Category;
 import com.thanhnien.rss.model.RssFeed;
 import org.slf4j.Logger;
@@ -16,11 +20,21 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import org.springframework.cache.annotation.Cacheable;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 
 @Service
 public class RssService {
+
+        @Autowired
+        @Lazy
+        private RssService self;
 
         private static final Logger logger = LoggerFactory.getLogger(RssService.class);
         private static final String BASE_RSS_URL = "https://thanhnien.vn/rss/";
@@ -622,6 +636,7 @@ public class RssService {
         /**
          * Fetch RSS feed from URL
          */
+        @Cacheable(value = "rssFeed", key = "#rssUrl", unless = "#result == null || #result.articles.isEmpty()")
         public RssFeed fetchRss(String rssUrl) {
                 try {
                         logger.info("Fetching RSS from: {}", rssUrl);
@@ -629,23 +644,23 @@ public class RssService {
                         SyndFeedInput input = new SyndFeedInput();
                         SyndFeed syndFeed = input.build(new XmlReader(url));
 
-                        List<Article> articles = new ArrayList<>();
-                        for (SyndEntry entry : syndFeed.getEntries()) {
-                                Article article = Article.builder()
-                                                .title(entry.getTitle())
-                                                .link(entry.getLink())
-                                                .description(cleanDescription(
-                                                                entry.getDescription() != null
-                                                                                ? entry.getDescription().getValue()
-                                                                                : ""))
-                                                .pubDate(entry.getPublishedDate() != null
-                                                                ? dateFormat.format(entry.getPublishedDate())
-                                                                : "")
-                                                .imageUrl(extractImageUrl(entry))
-                                                .author(entry.getAuthor())
-                                                .build();
-                                articles.add(article);
-                        }
+                        List<Article> articles = syndFeed.getEntries().parallelStream()
+                                        .map(entry -> Article.builder()
+                                                        .title(entry.getTitle())
+                                                        .link(entry.getLink())
+                                                        .description(cleanDescription(
+                                                                        entry.getDescription() != null
+                                                                                        ? entry.getDescription()
+                                                                                                        .getValue()
+                                                                                        : ""))
+                                                        .pubDate(entry.getPublishedDate() != null
+                                                                        ? dateFormat.format(entry.getPublishedDate())
+                                                                        : "")
+                                                        .imageUrl(extractImageUrl(entry))
+                                                        .videoUrl(extractVideoUrl(entry.getLink()))
+                                                        .author(entry.getAuthor())
+                                                        .build())
+                                        .collect(Collectors.toList());
 
                         return RssFeed.builder()
                                         .title(syndFeed.getTitle())
@@ -669,7 +684,7 @@ public class RssService {
          * Get home page articles
          */
         public RssFeed getHomeArticles() {
-                return fetchRss(BASE_RSS_URL + "home.rss");
+                return self.fetchRss(BASE_RSS_URL + "home.rss");
         }
 
         /**
@@ -678,7 +693,7 @@ public class RssService {
         public RssFeed getArticlesByCategory(String slug) {
                 Category category = findCategoryBySlug(slug);
                 if (category != null) {
-                        RssFeed feed = fetchRss(category.getRssUrl());
+                        RssFeed feed = self.fetchRss(category.getRssUrl());
                         feed.getArticles().forEach(article -> article.setCategory(category.getName()));
                         return feed;
                 }
@@ -695,7 +710,7 @@ public class RssService {
         public List<RssFeed> getAllFeeds() {
                 List<RssFeed> allFeeds = new ArrayList<>();
                 for (Category category : categories) {
-                        RssFeed feed = fetchRss(category.getRssUrl());
+                        RssFeed feed = self.fetchRss(category.getRssUrl());
                         feed.getArticles().forEach(article -> article.setCategory(category.getName()));
                         allFeeds.add(feed);
                 }
@@ -732,5 +747,56 @@ public class RssService {
                         return "";
                 // Remove HTML tags but keep text
                 return description.replaceAll("<[^>]*>", "").trim();
+        }
+
+        /**
+         * Extract video URL from article page
+         */
+        private String extractVideoUrl(String articleUrl) {
+                try {
+                        // Only fetch for video category or if URL contains "video"
+                        if (articleUrl == null || !articleUrl.contains("video")) {
+                                return null;
+                        }
+
+                        Document doc = Jsoup.connect(articleUrl)
+                                        .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+                                        .timeout(5000)
+                                        .get();
+
+                        // Strategy 1: Look for video tag inside table.video video (Thanh Nien specific)
+                        Element videoTag = doc.selectFirst("table.video video");
+                        if (videoTag != null && videoTag.hasAttr("src")) {
+                                return videoTag.attr("src");
+                        }
+
+                        // Strategy 2: Look for video tag inside td.vid video (Thanh Nien specific)
+                        Element videoTag2 = doc.selectFirst("td.vid video");
+                        if (videoTag2 != null && videoTag2.hasAttr("src")) {
+                                return videoTag2.attr("src");
+                        }
+
+                        // Strategy 3: Look for any video tag with components
+                        Element anyVideo = doc.selectFirst("video[src]");
+                        if (anyVideo != null) {
+                                return anyVideo.attr("src");
+                        }
+
+                        // Strategy 4: Open Graph video tag
+                        Element ogVideo = doc.selectFirst("meta[property=og:video]");
+                        if (ogVideo != null) {
+                                return ogVideo.attr("content");
+                        }
+
+                        // Strategy 5: Look for video content div with data attributes
+                        Element videoDiv = doc.selectFirst("div.cms-video-player");
+                        if (videoDiv != null && videoDiv.hasAttr("data-src")) {
+                                return videoDiv.attr("data-src");
+                        }
+
+                } catch (Exception e) {
+                        logger.error("Error extracting video URL from {}: {}", articleUrl, e.getMessage());
+                }
+                return null;
         }
 }
