@@ -15,6 +15,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -639,47 +641,95 @@ public class RssService {
          */
         @Cacheable(value = "rssFeed", key = "#rssUrl", unless = "#result == null || #result.articles.isEmpty()")
         public RssFeed fetchRss(String rssUrl) {
-                try {
-                        logger.info("Fetching RSS from: {}", rssUrl);
-                        URL url = java.net.URI.create(rssUrl).toURL();
-                        SyndFeedInput input = new SyndFeedInput();
-                        SyndFeed syndFeed = input.build(new XmlReader(url));
+                int maxRetries = 3;
+                int retryCount = 0;
+                Exception lastException = null;
 
-                        List<Article> articles = syndFeed.getEntries().parallelStream()
-                                        .map(entry -> Article.builder()
-                                                        .title(entry.getTitle())
-                                                        .link(entry.getLink())
-                                                        .description(cleanDescription(
-                                                                        entry.getDescription() != null
-                                                                                        ? entry.getDescription()
-                                                                                                        .getValue()
-                                                                                        : ""))
-                                                        .pubDate(entry.getPublishedDate() != null
-                                                                        ? dateFormat.format(entry.getPublishedDate())
-                                                                        : "")
-                                                        .imageUrl(extractImageUrl(entry))
-                                                        .videoUrl(extractVideoUrl(entry.getLink()))
-                                                        .author(extractAuthor(entry))
-                                                        .category(extractCategory(entry))
-                                                        .build())
-                                        .collect(Collectors.toList());
+                while (retryCount < maxRetries) {
+                        HttpURLConnection connection = null;
+                        try {
+                                logger.info("Fetching RSS from: {} (attempt {})", rssUrl, retryCount + 1);
+                                URL url = java.net.URI.create(rssUrl).toURL();
+                                
+                                connection = (HttpURLConnection) url.openConnection();
+                                connection.setRequestMethod("GET");
+                                connection.setConnectTimeout(15000); // 15 seconds connect timeout
+                                connection.setReadTimeout(30000); // 30 seconds read timeout
+                                
+                                // Set headers to mimic a real browser request from Vietnam
+                                connection.setRequestProperty("User-Agent", 
+                                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                                connection.setRequestProperty("Accept", 
+                                        "application/rss+xml, application/xml, text/xml, */*");
+                                connection.setRequestProperty("Accept-Language", "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7");
+                                connection.setRequestProperty("Accept-Encoding", "identity");
+                                connection.setRequestProperty("Cache-Control", "no-cache");
+                                connection.setRequestProperty("Connection", "keep-alive");
+                                
+                                int responseCode = connection.getResponseCode();
+                                if (responseCode != HttpURLConnection.HTTP_OK) {
+                                        logger.warn("HTTP {} received from {}", responseCode, rssUrl);
+                                        retryCount++;
+                                        Thread.sleep(1000 * retryCount); // Exponential backoff
+                                        continue;
+                                }
 
-                        return RssFeed.builder()
-                                        .title(syndFeed.getTitle())
-                                        .description(syndFeed.getDescription())
-                                        .link(syndFeed.getLink())
-                                        .language(syndFeed.getLanguage())
-                                        .articles(articles)
-                                        .build();
+                                try (InputStream inputStream = connection.getInputStream()) {
+                                        SyndFeedInput input = new SyndFeedInput();
+                                        SyndFeed syndFeed = input.build(new XmlReader(inputStream));
 
-                } catch (Exception e) {
-                        logger.error("Error fetching RSS from {}: {}", rssUrl, e.getMessage());
-                        return RssFeed.builder()
-                                        .title("Error")
-                                        .description("Failed to fetch RSS: " + e.getMessage())
-                                        .articles(new ArrayList<>())
-                                        .build();
+                                        List<Article> articles = syndFeed.getEntries().parallelStream()
+                                                        .map(entry -> Article.builder()
+                                                                        .title(entry.getTitle())
+                                                                        .link(entry.getLink())
+                                                                        .description(cleanDescription(
+                                                                                        entry.getDescription() != null
+                                                                                                        ? entry.getDescription()
+                                                                                                                        .getValue()
+                                                                                                        : ""))
+                                                                        .pubDate(entry.getPublishedDate() != null
+                                                                                        ? dateFormat.format(entry.getPublishedDate())
+                                                                                        : "")
+                                                                        .imageUrl(extractImageUrl(entry))
+                                                                        .videoUrl(extractVideoUrl(entry.getLink()))
+                                                                        .author(extractAuthor(entry))
+                                                                        .category(extractCategory(entry))
+                                                                        .build())
+                                                        .collect(Collectors.toList());
+
+                                        return RssFeed.builder()
+                                                        .title(syndFeed.getTitle())
+                                                        .description(syndFeed.getDescription())
+                                                        .link(syndFeed.getLink())
+                                                        .language(syndFeed.getLanguage())
+                                                        .articles(articles)
+                                                        .build();
+                                }
+
+                        } catch (Exception e) {
+                                lastException = e;
+                                logger.warn("Attempt {} failed for {}: {}", retryCount + 1, rssUrl, e.getMessage());
+                                retryCount++;
+                                try {
+                                        Thread.sleep(1000 * retryCount); // Exponential backoff
+                                } catch (InterruptedException ie) {
+                                        Thread.currentThread().interrupt();
+                                        break;
+                                }
+                        } finally {
+                                if (connection != null) {
+                                        connection.disconnect();
+                                }
+                        }
                 }
+
+                logger.error("Error fetching RSS from {} after {} retries: {}", 
+                        rssUrl, maxRetries, lastException != null ? lastException.getMessage() : "Unknown error");
+                return RssFeed.builder()
+                                .title("Error")
+                                .description("Failed to fetch RSS after " + maxRetries + " attempts")
+                                .articles(new ArrayList<>())
+                                .build();
         }
 
         /**

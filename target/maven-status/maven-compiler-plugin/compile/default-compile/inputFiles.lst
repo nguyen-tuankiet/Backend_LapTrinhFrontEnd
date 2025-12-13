@@ -1,4 +1,5 @@
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\service\RssService.java
+D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\model\HomePageData.java
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\service\ArticleScraperService.java
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\model\Category.java
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\model\Article.java
@@ -7,3 +8,4 @@ D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\c
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\ThanhnienRssApplication.java
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\config\CorsConfig.java
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\model\ArticleDetail.java
+D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\model\CategorySection.java
