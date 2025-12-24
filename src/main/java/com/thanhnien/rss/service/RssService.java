@@ -705,7 +705,7 @@ public class RssService {
                                                                                                         .getPublishedDate())
                                                                                         : "")
                                                                         .imageUrl(extractImageUrl(entry))
-                                                                        .videoUrl(extractVideoUrl(entry.getLink()))
+                                                                        .videoUrl((entry.getLink()))
                                                                         .author(extractAuthor(entry))
                                                                         .category(extractCategory(entry))
                                                                         .build())
@@ -820,56 +820,56 @@ public class RssService {
                 return description.replaceAll("<[^>]*>", "").trim();
         }
 
-        /**
-         * Extract video URL from article page
-         */
-        private String extractVideoUrl(String articleUrl) {
-                try {
-                        // Only fetch for video category or if URL contains "video"
-                        if (articleUrl == null || !articleUrl.contains("video")) {
-                                return null;
-                        }
-
-                        Document doc = Jsoup.connect(articleUrl)
-                                        .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-                                        .timeout(5000)
-                                        .get();
-
-                        // Strategy 1: Look for video tag inside table.video video (Thanh Nien specific)
-                        Element videoTag = doc.selectFirst("table.video video");
-                        if (videoTag != null && videoTag.hasAttr("src")) {
-                                return videoTag.attr("src");
-                        }
-
-                        // Strategy 2: Look for video tag inside td.vid video (Thanh Nien specific)
-                        Element videoTag2 = doc.selectFirst("td.vid video");
-                        if (videoTag2 != null && videoTag2.hasAttr("src")) {
-                                return videoTag2.attr("src");
-                        }
-
-                        // Strategy 3: Look for any video tag with components
-                        Element anyVideo = doc.selectFirst("video[src]");
-                        if (anyVideo != null) {
-                                return anyVideo.attr("src");
-                        }
-
-                        // Strategy 4: Open Graph video tag
-                        Element ogVideo = doc.selectFirst("meta[property=og:video]");
-                        if (ogVideo != null) {
-                                return ogVideo.attr("content");
-                        }
-
-                        // Strategy 5: Look for video content div with data attributes
-                        Element videoDiv = doc.selectFirst("div.cms-video-player");
-                        if (videoDiv != null && videoDiv.hasAttr("data-src")) {
-                                return videoDiv.attr("data-src");
-                        }
-
-                } catch (Exception e) {
-                        logger.error("Error extracting video URL from {}: {}", articleUrl, e.getMessage());
-                }
-                return null;
-        }
+//        /**
+//         * Extract video URL from article page
+//         */
+//        private String extractVideoUrl(String articleUrl) {
+//                try {
+//                        // Only fetch for video category or if URL contains "video"
+//                        if (articleUrl == null || !articleUrl.contains("video")) {
+//                                return null;
+//                        }
+//
+////                        Document doc = Jsoup.connect(articleUrl)
+////                                        .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+////                                        .timeout(5000)
+////                                        .get();
+//
+//                        // Strategy 1: Look for video tag inside table.video video (Thanh Nien specific)
+//                        Element videoTag = doc.selectFirst("table.video video");
+//                        if (videoTag != null && videoTag.hasAttr("src")) {
+//                                return videoTag.attr("src");
+//                        }
+//
+//                        // Strategy 2: Look for video tag inside td.vid video (Thanh Nien specific)
+//                        Element videoTag2 = doc.selectFirst("td.vid video");
+//                        if (videoTag2 != null && videoTag2.hasAttr("src")) {
+//                                return videoTag2.attr("src");
+//                        }
+//
+//                        // Strategy 3: Look for any video tag with components
+//                        Element anyVideo = doc.selectFirst("video[src]");
+//                        if (anyVideo != null) {
+//                                return anyVideo.attr("src");
+//                        }
+//
+//                        // Strategy 4: Open Graph video tag
+//                        Element ogVideo = doc.selectFirst("meta[property=og:video]");
+//                        if (ogVideo != null) {
+//                                return ogVideo.attr("content");
+//                        }
+//
+//                        // Strategy 5: Look for video content div with data attributes
+//                        Element videoDiv = doc.selectFirst("div.cms-video-player");
+//                        if (videoDiv != null && videoDiv.hasAttr("data-src")) {
+//                                return videoDiv.attr("data-src");
+//                        }
+//
+//                } catch (Exception e) {
+//                        logger.error("Error extracting video URL from {}: {}", articleUrl, e.getMessage());
+//                }
+//                return null;
+//        }
 
         /**
          * Extract author from RSS entry

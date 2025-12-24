@@ -7,6 +7,7 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -19,19 +20,32 @@ public class ArticleScraperService {
     private static final Logger logger = LoggerFactory.getLogger(ArticleScraperService.class);
     private static final int TIMEOUT = 10000; // 10 seconds
 
+    @Autowired
+    private HomePageCacheService cacheService;
+
     /**
-     * Scrape full article content from URL
+     * Scrape full article content from URL.
+     * Uses cache to avoid re-scraping the same article.
      */
     public ArticleDetail scrapeArticle(String articleUrl) {
+        // Check cache first
+        if (cacheService.hasCachedArticle(articleUrl)) {
+            logger.debug("Article cache HIT: {}", articleUrl);
+            return cacheService.getCachedArticle(articleUrl);
+        }
+
+        logger.debug("Article cache MISS: {}", articleUrl);
+
         try {
             logger.info("Scraping article from: {}", articleUrl);
+            long startTime = System.currentTimeMillis();
 
             Document doc = Jsoup.connect(articleUrl)
                     .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                     .timeout(TIMEOUT)
                     .get();
 
-            return ArticleDetail.builder()
+            ArticleDetail article = ArticleDetail.builder()
                     .url(articleUrl)
                     .title(extractTitle(doc))
                     .description(extractDescription(doc))
@@ -43,6 +57,14 @@ public class ArticleScraperService {
                     .images(extractAllImages(doc))
                     .tags(extractTags(doc))
                     .build();
+
+            long duration = System.currentTimeMillis() - startTime;
+            logger.info("Article scraped in {}ms: {}", duration, articleUrl);
+
+            // Save to cache
+            cacheService.cacheArticle(articleUrl, article);
+
+            return article;
 
         } catch (Exception e) {
             logger.error("Error scraping article from {}: {}", articleUrl, e.getMessage());
