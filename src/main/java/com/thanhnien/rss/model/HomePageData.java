@@ -13,7 +13,7 @@ import java.util.List;
 @AllArgsConstructor
 public class HomePageData {
     private List<Article> featuredArticles;
-    private List<CategorySection> categorygitSections;
+    private List<CategorySection> categorySections;
     private List<Article> trendingArticles;
     private List<Article> mostReadArticles;
 }
