@@ -2,13 +2,14 @@ package com.thanhnien.rss.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -18,32 +19,26 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /**
- * Service để dịch văn bản sử dụng MyMemory Translation API (miễn phí, 1000 req/day)
+ * Service để dịch văn bản sử dụng OpenAI API
  */
 @Service
 public class TranslationService {
 
     private static final Logger logger = LoggerFactory.getLogger(TranslationService.class);
 
-    // MyMemory API - Free, no API key required, 1000 requests/day
-    private static final String MYMEMORY_API_URL = "https://api.mymemory.translated.net/get";
+    private static final String OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+
+    @Value("${openai.api.key:}")
+    private String apiKey;
 
     @Value("${translation.cache.enabled:true}")
     private boolean cacheEnabled;
-
-    @Value("${translation.rate.limit.enabled:true}")
-    private boolean rateLimitEnabled;
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
     // Cache translations
     private final ConcurrentHashMap<String, String> translationCache = new ConcurrentHashMap<>();
-
-    // Rate limiter: 1000 requests per day = ~1 per 90 seconds, but we can burst
-    // Using semaphore for simple rate limiting
-    private final Semaphore rateLimiter;
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
 
     // Supported languages
     public static final String VI = "vi";
@@ -55,24 +50,25 @@ public class TranslationService {
     public static final String FR = "fr";
     public static final String ES = "es";
 
+    private static final Map<String, String> LANGUAGE_NAMES = Map.of(
+            "vi", "Vietnamese",
+            "en", "English",
+            "zh", "Chinese",
+            "ja", "Japanese",
+            "ko", "Korean",
+            "th", "Thai",
+            "fr", "French",
+            "es", "Spanish");
+
     public TranslationService() {
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
+                .connectTimeout(Duration.ofSeconds(30))
                 .build();
         this.objectMapper = new ObjectMapper();
-        this.rateLimiter = new Semaphore(20); // Allow 20 concurrent requests
-
-        // Refill 2 permits every second (allows bursts but maintains reasonable rate)
-        scheduler.scheduleAtFixedRate(() -> {
-            int current = rateLimiter.availablePermits();
-            if (current < 20) {
-                rateLimiter.release(Math.min(2, 20 - current));
-            }
-        }, 1, 1, TimeUnit.SECONDS);
     }
 
     /**
-     * Translate text using MyMemory API
+     * Translate text using OpenAI API
      */
     public String translate(String text, String sourceLang, String targetLang) {
         if (text == null || text.trim().isEmpty()) {
@@ -83,26 +79,20 @@ public class TranslationService {
             return text;
         }
 
-        // Truncate very long text to avoid API limits
-        String textToTranslate = text;
-        if (text.length() > 500) {
-            textToTranslate = text.substring(0, 500);
-            logger.debug("Truncated text from {} to 500 chars", text.length());
-        }
-
         // Check cache first
-        String cacheKey = generateCacheKey(textToTranslate, sourceLang, targetLang);
+        String cacheKey = generateCacheKey(text, sourceLang, targetLang);
         if (cacheEnabled && translationCache.containsKey(cacheKey)) {
             return translationCache.get(cacheKey);
         }
 
-        try {
-            // Acquire rate limit permit
-            if (rateLimitEnabled) {
-                rateLimiter.acquire();
-            }
+        // Check if OpenAI is configured
+        if (apiKey == null || apiKey.isEmpty()) {
+            logger.warn("OpenAI API key not configured, returning original text");
+            return text;
+        }
 
-            String translated = callMyMemoryAPI(textToTranslate, sourceLang, targetLang);
+        try {
+            String translated = callOpenAI(text, sourceLang, targetLang);
 
             // Cache the result
             if (cacheEnabled && translated != null) {
@@ -112,58 +102,72 @@ public class TranslationService {
             return translated;
         } catch (Exception e) {
             logger.error("Translation failed for '{}' ({} -> {}): {}",
-                    textToTranslate.substring(0, Math.min(50, textToTranslate.length())),
+                    text.substring(0, Math.min(50, text.length())),
                     sourceLang, targetLang, e.getMessage());
             return text; // Return original on error
         }
     }
 
     /**
-     * Call MyMemory Translation API
-     * API Docs: https://mymemory.translated.net/doc/spec.php
+     * Call OpenAI API to translate text
      */
-    private String callMyMemoryAPI(String text, String sourceLang, String targetLang) throws Exception {
-        // Construct language pair (e.g., "vi|en")
-        String langPair = sourceLang + "|" + targetLang;
+    private String callOpenAI(String text, String sourceLang, String targetLang) throws Exception {
+        String sourceLanguage = LANGUAGE_NAMES.getOrDefault(sourceLang, sourceLang);
+        String targetLanguage = LANGUAGE_NAMES.getOrDefault(targetLang, targetLang);
 
-        // Build URL with query parameters
-        String encodedText = URLEncoder.encode(text, StandardCharsets.UTF_8);
-        String encodedLangPair = URLEncoder.encode(langPair, StandardCharsets.UTF_8);
-        String url = String.format("%s?q=%s&langpair=%s", MYMEMORY_API_URL, encodedText, encodedLangPair);
+        // Build request body
+        ObjectNode requestBody = objectMapper.createObjectNode();
+        requestBody.put("model", "gpt-3.5-turbo");
+
+        ArrayNode messages = requestBody.putArray("messages");
+
+        // System message
+        ObjectNode systemMessage = messages.addObject();
+        systemMessage.put("role", "system");
+        systemMessage.put("content",
+                "You are a professional translator. Translate the following text from "
+                        + sourceLanguage + " to " + targetLanguage
+                        + ". Only return the translated text, nothing else. Keep the same formatting.");
+
+        // User message with text to translate
+        ObjectNode userMessage = messages.addObject();
+        userMessage.put("role", "user");
+        userMessage.put("content", text);
+
+        requestBody.put("max_tokens", 2000);
+        requestBody.put("temperature", 0.3); // Lower temperature for more consistent translations
 
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .timeout(Duration.ofSeconds(15))
-                .header("Accept", "application/json")
-                .GET()
+                .uri(URI.create(OPENAI_API_URL))
+                .timeout(Duration.ofSeconds(60))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + apiKey)
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody.toString(), StandardCharsets.UTF_8))
                 .build();
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
-            throw new RuntimeException("API returned status " + response.statusCode());
+            throw new RuntimeException("OpenAI API returned status " + response.statusCode() + ": " + response.body());
         }
 
         // Parse response
         JsonNode jsonResponse = objectMapper.readTree(response.body());
+        JsonNode choices = jsonResponse.get("choices");
 
-        // Check for errors
-        if (jsonResponse.has("responseStatus") && jsonResponse.get("responseStatus").asInt() != 200) {
-            String errorMsg = jsonResponse.has("responseDetails") ?
-                    jsonResponse.get("responseDetails").asText() : "Unknown error";
-            throw new RuntimeException("Translation API error: " + errorMsg);
+        if (choices != null && choices.isArray() && choices.size() > 0) {
+            JsonNode firstChoice = choices.get(0);
+            JsonNode message = firstChoice.get("message");
+            if (message != null && message.has("content")) {
+                return message.get("content").asText().trim();
+            }
         }
 
-        // Extract translated text
-        if (jsonResponse.has("responseData") && jsonResponse.get("responseData").has("translatedText")) {
-            return jsonResponse.get("responseData").get("translatedText").asText();
-        }
-
-        throw new RuntimeException("No translation in response");
+        throw new RuntimeException("No translation in OpenAI response");
     }
 
     /**
-     * Batch translate
+     * Batch translate multiple texts - OpenAI can handle this efficiently
      */
     public List<String> batchTranslate(List<String> texts, String sourceLang, String targetLang) {
         if (texts == null || texts.isEmpty()) {
@@ -226,15 +230,14 @@ public class TranslationService {
      * Get cache statistics
      */
     public String getCacheStats() {
-        return String.format("Translation cache: %d entries, Rate limiter permits: %d",
-                translationCache.size(), rateLimiter.availablePermits());
+        return String.format("Translation cache: %d entries (OpenAI-powered)", translationCache.size());
     }
 
     /**
      * Check if language is supported
      */
     public boolean isLanguageSupported(String langCode) {
-        return langCode.matches("^(vi|en|zh|ja|ko|th|fr|es|de|it|pt|ru|ar)$");
+        return LANGUAGE_NAMES.containsKey(langCode);
     }
 
     /**
@@ -252,12 +255,53 @@ public class TranslationService {
         for (String term : commonTerms) {
             try {
                 translate(term, VI, EN);
-                Thread.sleep(200); // Small delay between requests
             } catch (Exception e) {
                 logger.warn("Failed to prewarm term '{}': {}", term, e.getMessage());
             }
         }
 
         logger.info("Cache prewarming complete: {} entries", translationCache.size());
+    }
+
+    // ==================== PERSISTENT CACHE ====================
+
+    private static final String CACHE_FILE = "translation_cache.json";
+
+    @jakarta.annotation.PostConstruct
+    public void init() {
+        loadCacheFromFile();
+    }
+
+    @jakarta.annotation.PreDestroy
+    public void destroy() {
+        saveCacheToFile();
+    }
+
+    private void loadCacheFromFile() {
+        if (!cacheEnabled)
+            return;
+        try {
+            java.io.File file = new java.io.File(CACHE_FILE);
+            if (file.exists()) {
+                com.fasterxml.jackson.core.type.TypeReference<ConcurrentHashMap<String, String>> typeRef = new com.fasterxml.jackson.core.type.TypeReference<>() {
+                };
+                Map<String, String> loaded = objectMapper.readValue(file, typeRef);
+                translationCache.putAll(loaded);
+                logger.info("Loaded {} translations from disk cache", loaded.size());
+            }
+        } catch (Exception e) {
+            logger.error("Failed to load translation cache from disk: {}", e.getMessage());
+        }
+    }
+
+    private void saveCacheToFile() {
+        if (!cacheEnabled)
+            return;
+        try {
+            objectMapper.writeValue(new java.io.File(CACHE_FILE), translationCache);
+            logger.info("Saved {} translations to disk cache", translationCache.size());
+        } catch (Exception e) {
+            logger.error("Failed to save translation cache to disk: {}", e.getMessage());
+        }
     }
 }

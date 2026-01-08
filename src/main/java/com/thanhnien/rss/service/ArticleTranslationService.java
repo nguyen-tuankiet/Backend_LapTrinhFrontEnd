@@ -68,16 +68,20 @@ public class ArticleTranslationService {
             logger.info("Translating {} articles to {}", articles.size(), targetLang);
             long startTime = System.currentTimeMillis();
 
-            List<Article> translatedArticles = new ArrayList<>();
+            // Process articles in PARALLEL
+            // Note: TranslationService itself has rate limiting (Semaphore), so parallel
+            // calls
+            // will just queue up and execute as fast as permitted, maximizing throughput.
+            List<CompletableFuture<Article>> futures = articles.stream()
+                    .map(article -> CompletableFuture.supplyAsync(() -> translateArticle(article, targetLang)))
+                    .collect(Collectors.toList());
 
-            // Process articles sequentially with built-in rate limiting
-            for (Article article : articles) {
-                translatedArticles.add(translateArticle(article, targetLang));
-            }
+            List<Article> translatedArticles = futures.stream()
+                    .map(CompletableFuture::join)
+                    .collect(Collectors.toList());
 
             long duration = System.currentTimeMillis() - startTime;
-            logger.info("Translated {} articles in {}ms (~{}ms per article)",
-                    articles.size(), duration, duration / articles.size());
+            logger.info("Translated {} articles in {}ms (parallel)", articles.size(), duration);
 
             return translatedArticles;
         } catch (Exception e) {
@@ -173,45 +177,42 @@ public class ArticleTranslationService {
             logger.info("Translating HomePageData to {}", targetLang);
             long startTime = System.currentTimeMillis();
 
-            // Pre-warm cache with category names to speed up translation
+            // 1. Featured Articles
+            CompletableFuture<List<Article>> featuredFuture = CompletableFuture.supplyAsync(() -> translateArticles(
+                    data.getFeaturedArticles() != null ? data.getFeaturedArticles() : new ArrayList<>(), targetLang));
+
+            // 2. Trending Articles
+            CompletableFuture<List<Article>> trendingFuture = CompletableFuture.supplyAsync(() -> translateArticles(
+                    data.getTrendingArticles() != null ? data.getTrendingArticles() : new ArrayList<>(), targetLang));
+
+            // 3. Most Read Articles
+            CompletableFuture<List<Article>> mostReadFuture = CompletableFuture.supplyAsync(() -> translateArticles(
+                    data.getMostReadArticles() != null ? data.getMostReadArticles() : new ArrayList<>(), targetLang));
+
+            // 4. Category Sections
+            List<CompletableFuture<CategorySection>> sectionFutures = new ArrayList<>();
             if (data.getCategorySections() != null) {
                 for (CategorySection section : data.getCategorySections()) {
-                    // This will cache category names
-                    translateCategoryName(section.getCategoryName(), targetLang);
+                    sectionFutures
+                            .add(CompletableFuture.supplyAsync(() -> translateCategorySection(section, targetLang)));
                 }
             }
 
-            // Translate featured articles
-            List<Article> featured = translateArticles(
-                    data.getFeaturedArticles() != null ? data.getFeaturedArticles() : new ArrayList<>(),
-                    targetLang);
+            // Wait for all
+            CompletableFuture<Void> allFutures = CompletableFuture.allOf(
+                    featuredFuture, trendingFuture, mostReadFuture,
+                    CompletableFuture.allOf(sectionFutures.toArray(new CompletableFuture[0])));
 
-            // Translate category sections (sequential to respect rate limits)
-            List<CategorySection> sections = new ArrayList<>();
-            if (data.getCategorySections() != null) {
-                for (CategorySection section : data.getCategorySections()) {
-                    sections.add(translateCategorySection(section, targetLang));
-                }
-            }
-
-            // Translate trending articles
-            List<Article> trending = translateArticles(
-                    data.getTrendingArticles() != null ? data.getTrendingArticles() : new ArrayList<>(),
-                    targetLang);
-
-            // Translate most read articles
-            List<Article> mostRead = translateArticles(
-                    data.getMostReadArticles() != null ? data.getMostReadArticles() : new ArrayList<>(),
-                    targetLang);
+            allFutures.join();
 
             long duration = System.currentTimeMillis() - startTime;
-            logger.info("HomePageData translated in {}ms", duration);
+            logger.info("HomePageData translated in {}ms (parallel)", duration);
 
             return HomePageData.builder()
-                    .featuredArticles(featured)
-                    .categorySections(sections)
-                    .trendingArticles(trending)
-                    .mostReadArticles(mostRead)
+                    .featuredArticles(featuredFuture.get())
+                    .categorySections(sectionFutures.stream().map(CompletableFuture::join).collect(Collectors.toList()))
+                    .trendingArticles(trendingFuture.get())
+                    .mostReadArticles(mostReadFuture.get())
                     .build();
         } catch (Exception e) {
             logger.error("Error translating home page data: {}", e.getMessage(), e);
