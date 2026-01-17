@@ -7,6 +7,7 @@ D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\s
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\model\RssFeed.java
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\service\HomePageScheduler.java
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\model\ChatRequest.java
+D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\service\DeepLService.java
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\controller\RssController.java
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\service\LocalizationService.java
 D:\Documents\FIT_NLU\frontend\Project\back-end\src\main\java\com\thanhnien\rss\model\CategorySection.java

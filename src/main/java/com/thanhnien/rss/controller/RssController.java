@@ -51,6 +51,7 @@ public class RssController {
     public ResponseEntity<RssFeed> getHomeArticles(
             @RequestParam(defaultValue = "vi") String lang) {
 
+        lang = sanitizeLang(lang);
         RssFeed feed = rssService.getHomeArticles();
 
         // Translate if not Vietnamese
@@ -70,14 +71,25 @@ public class RssController {
     public ResponseEntity<HomePageData> getHomePageData(
             @RequestParam(defaultValue = "vi") String lang) {
 
-        // Get from cache or fetch directly
+        lang = sanitizeLang(lang);
+        // Check translated cache first for non-Vietnamese requests
+        if (!lang.equals("vi")) {
+            HomePageData cachedTranslated = cacheService.getTranslatedHomePageData(lang);
+            if (cachedTranslated != null) {
+                return ResponseEntity.ok(cachedTranslated); // Instant response from cache!
+            }
+        }
+
+        // Get Vietnamese data from cache or fetch directly
         HomePageData data = cacheService.hasCachedData()
                 ? cacheService.getCachedData()
                 : rssService.getHomePageData();
 
-        // Translate if not Vietnamese
+        // Translate on-demand if not Vietnamese and no cached translation
         if (!lang.equals("vi")) {
             data = articleTranslationService.translateHomePageData(data, lang);
+            // Cache for future requests
+            cacheService.cacheTranslatedHomePageData(data, lang);
         }
 
         return ResponseEntity.ok(data);
@@ -93,6 +105,7 @@ public class RssController {
             @RequestParam String url,
             @RequestParam(defaultValue = "vi") String lang) {
 
+        lang = sanitizeLang(lang);
         ArticleDetail article = articleScraperService.scrapeArticle(url);
 
         // Translate if not Vietnamese
@@ -111,6 +124,7 @@ public class RssController {
     @GetMapping("/categories")
     public ResponseEntity<List<Category>> getAllCategories(
             @RequestParam(defaultValue = "vi") String lang) {
+        lang = sanitizeLang(lang);
         List<Category> categories = rssService.getAllCategories();
 
         // Translate if not Vietnamese
@@ -131,14 +145,25 @@ public class RssController {
             @PathVariable String slug,
             @RequestParam(defaultValue = "vi") String lang) {
 
-        // Get from cache or fetch directly
+        lang = sanitizeLang(lang);
+        // Check translated cache first for non-Vietnamese requests
+        if (!lang.equals("vi")) {
+            RssFeed cachedTranslated = cacheService.getTranslatedCategoryFeed(slug, lang);
+            if (cachedTranslated != null) {
+                return ResponseEntity.ok(cachedTranslated); // Instant response from cache!
+            }
+        }
+
+        // Get Vietnamese data from cache or fetch directly
         RssFeed feed = cacheService.hasCachedCategoryFeed(slug)
                 ? cacheService.getCachedCategoryFeed(slug)
                 : rssService.getArticlesByCategory(slug);
 
-        // Translate if not Vietnamese
+        // Translate on-demand if not Vietnamese and no cached translation
         if (!lang.equals("vi")) {
             feed = articleTranslationService.translateRssFeed(feed, lang);
+            // Cache for future requests
+            cacheService.cacheTranslatedCategoryFeed(slug, lang, feed);
         }
 
         return ResponseEntity.ok(feed);
@@ -155,14 +180,24 @@ public class RssController {
             @PathVariable String subcategory,
             @RequestParam(defaultValue = "vi") String lang) {
 
-        // Get from cache or fetch directly
+        lang = sanitizeLang(lang);
+        // Check translated cache first for non-Vietnamese requests
+        if (!lang.equals("vi")) {
+            RssFeed cachedTranslated = cacheService.getTranslatedCategoryFeed(subcategory, lang);
+            if (cachedTranslated != null) {
+                return ResponseEntity.ok(cachedTranslated);
+            }
+        }
+
+        // Get Vietnamese data from cache or fetch directly
         RssFeed feed = cacheService.hasCachedCategoryFeed(subcategory)
                 ? cacheService.getCachedCategoryFeed(subcategory)
                 : rssService.getArticlesByCategory(subcategory);
 
-        // Translate if not Vietnamese
+        // Translate on-demand if not Vietnamese
         if (!lang.equals("vi")) {
             feed = articleTranslationService.translateRssFeed(feed, lang);
+            cacheService.cacheTranslatedCategoryFeed(subcategory, lang, feed);
         }
 
         return ResponseEntity.ok(feed);
@@ -178,6 +213,7 @@ public class RssController {
             @RequestParam String url,
             @RequestParam(defaultValue = "vi") String lang) {
 
+        lang = sanitizeLang(lang);
         RssFeed feed = rssService.fetchRss(url);
 
         // Translate if not Vietnamese
@@ -259,5 +295,43 @@ public class RssController {
         stats.put("rssCache", cacheService.getCacheStats());
         stats.put("translationCache", translationService.getCacheStats());
         return ResponseEntity.ok(stats);
+    }
+
+    // ==================== HELPERS ====================
+
+    /**
+     * Sanitize and extract valid language code from potentially malformed input
+     * Handles cases like "vihome-page?lang=en" -> extracts "en"
+     */
+    private String sanitizeLang(String lang) {
+        if (lang == null || lang.isEmpty()) {
+            return "vi";
+        }
+
+        // precise match
+        if (lang.length() == 2 && translationService.isLanguageSupported(lang)) {
+            return lang;
+        }
+
+        // Try to find "lang=xx" inside the string (e.g. junk?lang=en)
+        if (lang.contains("lang=")) {
+            int index = lang.indexOf("lang=");
+            if (index + 7 <= lang.length()) { // lang=xx check length
+                String code = lang.substring(index + 5, index + 7);
+                if (translationService.isLanguageSupported(code)) {
+                    return code;
+                }
+            }
+        }
+
+        // Try to just take the first 2 chars if they are valid
+        if (lang.length() >= 2) {
+            String code = lang.substring(0, 2);
+            if (translationService.isLanguageSupported(code)) {
+                return code;
+            }
+        }
+
+        return "vi";
     }
 }

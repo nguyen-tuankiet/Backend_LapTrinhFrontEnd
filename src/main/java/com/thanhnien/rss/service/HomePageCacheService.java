@@ -43,6 +43,13 @@ public class HomePageCacheService {
         }
     };
 
+    // ==================== TRANSLATED CONTENT CACHE ====================
+    // Cache cho HomePageData đã dịch (key = language code: "en", "ja", etc.)
+    private final ConcurrentHashMap<String, HomePageData> translatedHomePageCache = new ConcurrentHashMap<>();
+
+    // Cache cho Category Feeds đã dịch (key = "slug:lang", e.g. "the-thao:en")
+    private final ConcurrentHashMap<String, RssFeed> translatedCategoryFeedsCache = new ConcurrentHashMap<>();
+
     // ==================== HOME PAGE DATA ====================
 
     /**
@@ -170,9 +177,69 @@ public class HomePageCacheService {
      */
     public String getCacheStats() {
         return String.format(
-                "Cache Stats: HomePageData=%s, CategoryFeeds=%d, Articles=%d",
+                "Cache Stats: HomePageData=%s, CategoryFeeds=%d, Articles=%d, TranslatedHomePage=%d, TranslatedCategories=%d",
                 hasCachedData() ? "YES" : "NO",
                 getCategoryFeedsCacheSize(),
-                getArticleCacheSize());
+                getArticleCacheSize(),
+                translatedHomePageCache.size(),
+                translatedCategoryFeedsCache.size());
+    }
+
+    // ==================== TRANSLATED CONTENT METHODS ====================
+
+    /**
+     * Cache HomePageData đã dịch cho một ngôn ngữ
+     */
+    public void cacheTranslatedHomePageData(HomePageData data, String lang) {
+        translatedHomePageCache.put(lang, data);
+        logger.info("Translated HomePageData cached for language: {}", lang);
+    }
+
+    /**
+     * Lấy HomePageData đã dịch từ cache
+     */
+    public HomePageData getTranslatedHomePageData(String lang) {
+        return translatedHomePageCache.get(lang);
+    }
+
+    /**
+     * Kiểm tra xem có HomePageData đã dịch cho ngôn ngữ không
+     */
+    public boolean hasTranslatedHomePageData(String lang) {
+        return translatedHomePageCache.containsKey(lang);
+    }
+
+    /**
+     * Cache CategoryFeed đã dịch
+     */
+    public void cacheTranslatedCategoryFeed(String slug, String lang, RssFeed feed) {
+        String key = slug + ":" + lang;
+        translatedCategoryFeedsCache.put(key, feed);
+        logger.debug("Translated category feed cached: {} for lang {}", slug, lang);
+    }
+
+    /**
+     * Lấy CategoryFeed đã dịch từ cache
+     */
+    public RssFeed getTranslatedCategoryFeed(String slug, String lang) {
+        String key = slug + ":" + lang;
+        return translatedCategoryFeedsCache.get(key);
+    }
+
+    /**
+     * Kiểm tra xem có CategoryFeed đã dịch không
+     */
+    public boolean hasTranslatedCategoryFeed(String slug, String lang) {
+        String key = slug + ":" + lang;
+        return translatedCategoryFeedsCache.containsKey(key);
+    }
+
+    /**
+     * Xóa toàn bộ translated cache (khi refresh data mới)
+     */
+    public void clearTranslatedCaches() {
+        translatedHomePageCache.clear();
+        translatedCategoryFeedsCache.clear();
+        logger.info("All translated caches cleared");
     }
 }

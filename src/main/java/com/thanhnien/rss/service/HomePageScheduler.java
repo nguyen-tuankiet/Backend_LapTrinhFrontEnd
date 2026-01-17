@@ -33,6 +33,9 @@ public class HomePageScheduler {
     @Autowired
     private HomePageCacheService cacheService;
 
+    @Autowired
+    private ArticleTranslationService articleTranslationService;
+
     // Thread pool riêng cho background fetching
     private final ExecutorService backgroundExecutor = Executors.newFixedThreadPool(10);
 
@@ -46,6 +49,8 @@ public class HomePageScheduler {
         CompletableFuture.runAsync(() -> {
             refreshHomePageCache();
             refreshCategoryFeedsCache();
+            // Pre-translate to English after caching Vietnamese
+            // preTranslateToEnglish(); // Disabled to prevent DeepL 429 errors
             logger.info("=== Cache initialization complete. {} ===", cacheService.getCacheStats());
         }, backgroundExecutor);
     }
@@ -56,8 +61,12 @@ public class HomePageScheduler {
     @Scheduled(fixedRate = 300000)
     public void scheduledRefresh() {
         logger.info("=== Scheduled refresh started ===");
+        // Clear old translated caches before refresh
+        cacheService.clearTranslatedCaches();
         refreshHomePageCache();
         refreshCategoryFeedsCache();
+        // Pre-translate to English
+        // preTranslateToEnglish(); // Disabled to prevent DeepL 429 errors
         logger.info("=== Scheduled refresh complete. {} ===", cacheService.getCacheStats());
     }
 
@@ -139,6 +148,50 @@ public class HomePageScheduler {
 
         } catch (Exception e) {
             logger.error("Error refreshing category feeds cache: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Pre-translate HomePageData và một số category feeds sang tiếng Anh
+     * để user request đầu tiên được phục vụ từ cache
+     */
+    private void preTranslateToEnglish() {
+        try {
+            logger.info("=== Starting pre-translation to English ===");
+            long startTime = System.currentTimeMillis();
+
+            // Translate HomePageData
+            HomePageData viData = cacheService.getCachedHomePageData();
+            if (viData != null) {
+                HomePageData enData = articleTranslationService.translateHomePageData(viData, "en");
+                if (enData != null) {
+                    cacheService.cacheTranslatedHomePageData(enData, "en");
+                    logger.info("HomePageData pre-translated to English successfully");
+                }
+            }
+
+            // Translate main category feeds (top 5 most popular categories)
+            String[] popularCategories = { "thoi-su", "the-gioi", "kinh-te", "cong-nghe", "giai-tri" };
+            for (String slug : popularCategories) {
+                try {
+                    RssFeed viFeed = cacheService.getCachedCategoryFeed(slug);
+                    if (viFeed != null) {
+                        RssFeed enFeed = articleTranslationService.translateRssFeed(viFeed, "en");
+                        if (enFeed != null) {
+                            cacheService.cacheTranslatedCategoryFeed(slug, "en", enFeed);
+                            logger.debug("Category {} pre-translated to English", slug);
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.warn("Failed to pre-translate category {}: {}", slug, e.getMessage());
+                }
+            }
+
+            long duration = System.currentTimeMillis() - startTime;
+            logger.info("=== Pre-translation completed in {}ms ===", duration);
+
+        } catch (Exception e) {
+            logger.error("Error during pre-translation: {}", e.getMessage(), e);
         }
     }
 }

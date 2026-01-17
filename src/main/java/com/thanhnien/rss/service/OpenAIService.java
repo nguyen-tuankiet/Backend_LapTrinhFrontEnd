@@ -120,4 +120,71 @@ public class OpenAIService {
 
         return generateContent(prompt);
     }
+
+    /**
+     * Translate text using OpenAI
+     */
+    public String translate(String text, String sourceLang, String targetLang) {
+        if (!isConfigured()) {
+            logger.warn("OpenAI API key not configured for translation");
+            return text;
+        }
+
+        if (text == null || text.trim().isEmpty()) {
+            return text;
+        }
+
+        // Truncate long text to save tokens
+        String textToTranslate = text;
+        if (text.length() > 1000) {
+            textToTranslate = text.substring(0, 1000);
+        }
+
+        try {
+            // Build request body
+            ObjectNode requestBody = objectMapper.createObjectNode();
+            requestBody.put("model", model);
+
+            ArrayNode messages = requestBody.putArray("messages");
+            ObjectNode systemMessage = messages.addObject();
+            systemMessage.put("role", "system");
+            systemMessage.put("content",
+                    "You are a translator. Translate the following text from " + sourceLang + " to " + targetLang + ". "
+                            +
+                            "Only return the translated text, nothing else. Preserve HTML entities if any.");
+
+            ObjectNode userMessage = messages.addObject();
+            userMessage.put("role", "user");
+            userMessage.put("content", textToTranslate);
+
+            requestBody.put("max_tokens", 1500);
+            requestBody.put("temperature", 0.3);
+
+            String response = webClient.post()
+                    .uri(OPENAI_API_URL)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(requestBody.toString())
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            // Parse response
+            JsonNode responseJson = objectMapper.readTree(response);
+            JsonNode choices = responseJson.get("choices");
+            if (choices != null && choices.isArray() && choices.size() > 0) {
+                JsonNode content = choices.get(0).get("message").get("content");
+                if (content != null) {
+                    return content.asText().trim();
+                }
+            }
+
+            logger.warn("Unexpected OpenAI translation response");
+            return text;
+
+        } catch (Exception e) {
+            logger.error("Error translating with OpenAI: {}", e.getMessage());
+            return text;
+        }
+    }
 }
