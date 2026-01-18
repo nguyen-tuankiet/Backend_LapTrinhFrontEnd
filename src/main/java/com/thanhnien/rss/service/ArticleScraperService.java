@@ -1,6 +1,7 @@
 package com.thanhnien.rss.service;
 
 import com.thanhnien.rss.model.ArticleDetail;
+import com.thanhnien.rss.model.Article;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -48,6 +49,7 @@ public class ArticleScraperService {
             ArticleDetail article = ArticleDetail.builder()
                     .url(articleUrl)
                     .title(extractTitle(doc))
+                    .relatedNews(extractRelatedNews(doc)) // Extract first before content clean-up
                     .description(extractDescription(doc))
                     .content(extractContent(doc))
                     .author(extractAuthor(doc))
@@ -74,6 +76,84 @@ public class ArticleScraperService {
                     .content("Failed to scrape article: " + e.getMessage())
                     .build();
         }
+    }
+
+    private List<com.thanhnien.rss.model.Article> extractRelatedNews(Document doc) {
+        List<com.thanhnien.rss.model.Article> relatedArticles = new ArrayList<>();
+
+        // 1. Find all potential containers
+        Elements boxes = doc.select(".box-category");
+
+        Element relatedBox = null;
+        for (Element box : boxes) {
+            Element titleEl = box.selectFirst(".box-category-title");
+            if (titleEl != null && titleEl.text().trim().equalsIgnoreCase("Tin liên quan")) {
+                relatedBox = box;
+                break;
+            }
+        }
+
+        // Fallback: try searching for header directly if box structure is different
+        if (relatedBox == null) {
+            Elements headers = doc.select("h2, h3, h4, div, span, a");
+            for (Element header : headers) {
+                if (header.text().trim().equalsIgnoreCase("Tin liên quan")) {
+                    // Try to find a container parent
+                    relatedBox = header.closest(".box-category");
+                    if (relatedBox == null) {
+                        // Or maybe the parent of the parent is the container
+                        relatedBox = header.parent().parent();
+                    }
+                    if (relatedBox != null)
+                        break;
+                }
+            }
+        }
+
+        if (relatedBox != null) {
+            Elements items = relatedBox.select(".box-category-item");
+
+            for (Element item : items) {
+                try {
+                    Element titleLinkEl = item.selectFirst(".box-category-link-title");
+                    if (titleLinkEl == null)
+                        continue;
+
+                    String title = titleLinkEl.attr("title");
+                    if (title.isEmpty()) {
+                        title = titleLinkEl.text().trim();
+                    }
+
+                    String link = titleLinkEl.attr("href");
+                    if (!link.startsWith("http")) {
+                        link = "https://thanhnien.vn" + link;
+                    }
+
+                    String imageUrl = "";
+                    Element imgEl = item.selectFirst(".box-category-avatar");
+                    if (imgEl != null) {
+                        imageUrl = imgEl.attr("data-src");
+                        if (imageUrl.isEmpty())
+                            imageUrl = imgEl.attr("src");
+                    }
+
+                    if (!title.isEmpty()) {
+                        relatedArticles.add(com.thanhnien.rss.model.Article.builder()
+                                .title(title)
+                                .link(link)
+                                .imageUrl(imageUrl)
+                                .build());
+                    }
+                } catch (Exception e) {
+                    logger.warn("Error parsing related news item: {}", e.getMessage());
+                }
+            }
+
+            // Remove related section from doc to avoid duplicating in content
+            relatedBox.remove();
+        }
+
+        return relatedArticles;
     }
 
     private String extractTitle(Document doc) {

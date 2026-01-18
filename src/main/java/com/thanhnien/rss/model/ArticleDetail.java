@@ -22,4 +22,5 @@ public class ArticleDetail {
     private String imageUrl;
     private List<String> images;
     private List<String> tags;
+    private List<Article> relatedNews;
 }

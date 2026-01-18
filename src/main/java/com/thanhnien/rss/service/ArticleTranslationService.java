@@ -128,6 +128,9 @@ public class ArticleTranslationService {
                     .imageUrl(article.getImageUrl())
                     .images(article.getImages())
                     .tags(article.getTags() != null ? translateTags(article.getTags(), targetLang) : null)
+                    .relatedNews(article.getRelatedNews() != null
+                            ? translateArticles(article.getRelatedNews(), targetLang)
+                            : null)
                     .build();
         } catch (Exception e) {
             logger.error("Error translating article detail: {}", e.getMessage());
